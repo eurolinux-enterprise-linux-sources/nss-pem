@@ -1,12 +1,15 @@
 Name:       nss-pem
 Version:    1.0.3
-Release:    4%{?dist}
+Release:    5%{?dist}
 Summary:    PEM file reader for Network Security Services (NSS)
 
 License:    MPLv1.1
 URL:        https://github.com/kdudka/nss-pem
 Source0:    https://github.com/kdudka/nss-pem/releases/download/%{name}-%{version}/%{name}-%{version}.tar.xz
 Patch1:     0001-nss-pem-1.0.3-drop-wait-for-slot-event-cb.patch
+
+# update object ID while reusing a certificate (#1610998)
+Patch2:     0002-nss-pem-1.0.3-key-reload.patch
 
 BuildRequires: cmake
 BuildRequires: nss-pkcs11-devel
@@ -24,6 +27,7 @@ module.
 %prep
 %setup -q
 %patch1 -p1
+%patch2 -p1
 
 %build
 mkdir build
@@ -44,6 +48,9 @@ ctest %{?_smp_mflags} --output-on-failure
 %license COPYING
 
 %changelog
+* Wed Aug 08 2018 Kamil Dudka <kdudka@redhat.com> 1.0.3-5
+- update object ID while reusing a certificate (#1610998)
+
 * Wed Apr 26 2017 Kamil Dudka <kdudka@redhat.com> 1.0.3-4
 - fix missing prototypes detected by Covscan
 

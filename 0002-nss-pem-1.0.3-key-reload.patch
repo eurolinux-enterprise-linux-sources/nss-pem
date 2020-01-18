@@ -1,0 +1,246 @@
+From 31eddc5b70ff2158102af6c72849c3a500c4d002 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 3 Aug 2018 15:05:22 +0200
+Subject: [PATCH 1/5] pem_CreateObject: rewrite the conditions in the cert
+ search loop
+
+... to make the code more readable.  No changes in behavior are intended
+by this commit.
+
+Upstream-commit: 1d51c2337bc7156e3dfd7a8087ac4328f71174e3
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/pobject.c | 27 +++++++++++++++------------
+ 1 file changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/src/pobject.c b/src/pobject.c
+index e8891d0..c8539f2 100644
+--- a/src/pobject.c
++++ b/src/pobject.c
+@@ -1209,7 +1209,6 @@ pem_CreateObject
+                 goto loser;
+         }
+     } else if (objClass == CKO_PRIVATE_KEY) {
+-        /* Brute force: find the id of the certificate, if any, in this slot */
+         int i;
+         SECItem certDER;
+         CK_SESSION_HANDLE hSession;
+@@ -1222,24 +1221,28 @@ pem_CreateObject
+         certDER.len = 0; /* in case there is no equivalent cert */
+         certDER.data = NULL;
+ 
++        /* Brute force: find the id of the certificate, if any, in this slot */
+         objid = -1;
+         for (i = 0; i < pem_nobjs; i++) {
+             if (NULL == pem_objs[i])
+                 continue;
+ 
+-            if ((slotID == pem_objs[i]->slotID) && (pem_objs[i]->type == pemCert)) {
+-                objid = atoi(pem_objs[i]->id.data);
+-                certDER.data =
+-                    (void *) NSS_ZAlloc(NULL, pem_objs[i]->derCert->len);
++            if (slotID != pem_objs[i]->slotID)
++                continue;
+ 
+-                if (certDER.data == NULL)
+-                    goto loser;
++            if (pem_objs[i]->type != pemCert)
++                continue;
+ 
+-                certDER.len = pem_objs[i]->derCert->len;
+-                memcpy(certDER.data,
+-                        pem_objs[i]->derCert->data,
+-                        pem_objs[i]->derCert->len);
+-            }
++            objid = atoi(pem_objs[i]->id.data);
++            certDER.data = NSS_ZAlloc(NULL, pem_objs[i]->derCert->len);
++
++            if (certDER.data == NULL)
++                goto loser;
++
++            certDER.len = pem_objs[i]->derCert->len;
++            memcpy(certDER.data,
++                    pem_objs[i]->derCert->data,
++                    pem_objs[i]->derCert->len);
+         }
+ 
+         /* We're just adding a key, we'll assume the cert is next */
+-- 
+2.17.1
+
+
+From 476e1a7db2b35146db6c1fb5c0cd230f84778583 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 3 Aug 2018 15:09:01 +0200
+Subject: [PATCH 2/5] pem_CreateObject: fix memory leak in the cert search loop
+
+If we search the array in reverse direction and stop on the first match,
+we end up with the same results but without leaking certDER.data in each
+iteration after the first match.
+
+Upstream-commit: e85b6f903fa38a34672428be114741d397f17fe2
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/pobject.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/pobject.c b/src/pobject.c
+index c8539f2..34d0b5a 100644
+--- a/src/pobject.c
++++ b/src/pobject.c
+@@ -1223,7 +1223,7 @@ pem_CreateObject
+ 
+         /* Brute force: find the id of the certificate, if any, in this slot */
+         objid = -1;
+-        for (i = 0; i < pem_nobjs; i++) {
++        for (i = pem_nobjs - 1; 0 <= i; i--) {
+             if (NULL == pem_objs[i])
+                 continue;
+ 
+@@ -1243,6 +1243,7 @@ pem_CreateObject
+             memcpy(certDER.data,
+                     pem_objs[i]->derCert->data,
+                     pem_objs[i]->derCert->len);
++            break;
+         }
+ 
+         /* We're just adding a key, we'll assume the cert is next */
+-- 
+2.17.1
+
+
+From dddc9331e35520b772b499475f5f2a67eeac8fef Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 3 Aug 2018 15:12:46 +0200
+Subject: [PATCH 3/5] pem_CreateObject: check object ID in the cert search loop
+
+We need to find a certificate that refers to the key being added,
+which is not necessarily the last certificate added to the slot.
+
+Bug: https://bugzilla.redhat.com/1610998
+
+Upstream-commit: 5e6d9ce0d638eb6c9f25f31366960db2f8031716
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/pobject.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/pobject.c b/src/pobject.c
+index 34d0b5a..918b327 100644
+--- a/src/pobject.c
++++ b/src/pobject.c
+@@ -1233,7 +1233,11 @@ pem_CreateObject
+             if (pem_objs[i]->type != pemCert)
+                 continue;
+ 
+-            objid = atoi(pem_objs[i]->id.data);
++            if (atoi(pem_objs[i]->id.data) != pem_nobjs)
++                /* not a certificate that refers to the key being added */
++                continue;
++
++            objid = pem_nobjs;
+             certDER.data = NSS_ZAlloc(NULL, pem_objs[i]->derCert->len);
+ 
+             if (certDER.data == NULL)
+-- 
+2.17.1
+
+
+From ed88392c385d7a8733891fb736e9b7456331b617 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 3 Aug 2018 15:22:23 +0200
+Subject: [PATCH 4/5] AddObjectIfNeeded: use a pointer to avoid code
+ duplication
+
+No changes in behavior intended by this commit.
+
+Upstream-commit: 0eafa24fdf0b54e5a63a76a7c63dc4000253c971
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/pinst.c | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/src/pinst.c b/src/pinst.c
+index 5ac0ff3..c54cbe2 100644
+--- a/src/pinst.c
++++ b/src/pinst.c
+@@ -401,16 +401,17 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+ 
+     /* first look for the object in pem_objs, it might be already there */
+     for (i = 0; i < pem_nobjs; i++) {
+-        if (NULL == pem_objs[i])
++        pemInternalObject *const curObj = pem_objs[i];
++        if (NULL == curObj)
+             continue;
+ 
+         /* Comparing DER encodings is dependable and frees the PEM module
+          * from having to require clients to provide unique nicknames.
+          */
+-        if ((pem_objs[i]->objClass == objClass)
+-                && (pem_objs[i]->type == type)
+-                && (pem_objs[i]->slotID == slotID)
+-                && derEncodingsMatch(objClass, pem_objs[i], certDER, keyDER)) {
++        if ((curObj->objClass == objClass)
++                && (curObj->type == type)
++                && (curObj->slotID == slotID)
++                && derEncodingsMatch(objClass, curObj, certDER, keyDER)) {
+ 
+             /* While adding a client certificate we (wrongly?) assumed that the
+              * key object will follow right after the cert object.  However, if
+@@ -420,8 +421,8 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+             LinkSharedKeyObject(pem_nobjs, i);
+ 
+             plog("AddObjectIfNeeded: re-using internal object #%i\n", i);
+-            pem_objs[i]->refCount ++;
+-            return pem_objs[i];
++            curObj->refCount ++;
++            return curObj;
+         }
+     }
+ 
+-- 
+2.17.1
+
+
+From 9f0b5facee73afe5578e98010128a72236e6c370 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 3 Aug 2018 16:00:50 +0200
+Subject: [PATCH 5/5] AddObjectIfNeeded: update object ID while reusing a
+ certificate
+
+... in case it refers to an object that has already been removed
+
+Bug: https://bugzilla.redhat.com/1610998
+
+Upstream-commit: e14465a1238dcf7364dc07a1438d24111ccad3b1
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/pinst.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/pinst.c b/src/pinst.c
+index c54cbe2..25485b1 100644
+--- a/src/pinst.c
++++ b/src/pinst.c
+@@ -420,6 +420,18 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+              */
+             LinkSharedKeyObject(pem_nobjs, i);
+ 
++            if (CKO_CERTIFICATE == objClass) {
++                const int ref = atoi(curObj->id.data);
++                if (0 < ref && ref < pem_nobjs && !pem_objs[ref]) {
++                    /* The certificate we are going to reuse refers to an
++                     * object that has already been removed.  Make it refer
++                     * to the object that will be added next (private key).
++                     */
++                    NSS_ZFreeIf(curObj->id.data);
++                    assignObjectID(curObj, pem_nobjs);
++                }
++            }
++
+             plog("AddObjectIfNeeded: re-using internal object #%i\n", i);
+             curObj->refCount ++;
+             return curObj;
+-- 
+2.17.1
+
