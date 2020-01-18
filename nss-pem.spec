@@ -1,6 +1,6 @@
 Name:       nss-pem
 Version:    1.0.3
-Release:    5%{?dist}
+Release:    5%{?dist}.1
 Summary:    PEM file reader for Network Security Services (NSS)
 
 License:    MPLv1.1
@@ -10,6 +10,9 @@ Patch1:     0001-nss-pem-1.0.3-drop-wait-for-slot-event-cb.patch
 
 # update object ID while reusing a certificate (#1610998)
 Patch2:     0002-nss-pem-1.0.3-key-reload.patch
+
+# fix performance regression in libcurl (#1659108)
+Patch3:     0003-nss-pem-1.0.3-make-pem_objs-a-list-instead-of-array.patch
 
 BuildRequires: cmake
 BuildRequires: nss-pkcs11-devel
@@ -28,6 +31,7 @@ module.
 %setup -q
 %patch1 -p1
 %patch2 -p1
+%patch3 -p1
 
 %build
 mkdir build
@@ -48,6 +52,9 @@ ctest %{?_smp_mflags} --output-on-failure
 %license COPYING
 
 %changelog
+* Mon Jan 14 2019 Kamil Dudka <kdudka@redhat.com> 1.0.3-5.el7_6.1
+- fix performance regression in libcurl (#1659108)
+
 * Wed Aug 08 2018 Kamil Dudka <kdudka@redhat.com> 1.0.3-5
 - update object ID while reusing a certificate (#1610998)
 

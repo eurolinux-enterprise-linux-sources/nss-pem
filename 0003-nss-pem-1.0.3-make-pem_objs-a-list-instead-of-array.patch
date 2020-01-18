@@ -1,0 +1,1010 @@
+From c4bd40a483c7962beb4a8b1c7f84d647de66bf0c Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Tue, 29 Aug 2017 13:08:11 +0200
+Subject: [PATCH 1/5] util: fix the return value type of ReadDERFromFile()
+
+SECStatus is an inappropriate type for returning the count of objects.
+
+Upstream-commit: 01c13264e59050ea34aefc3d2a38e9ead247276c
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/ckpem.h   |  6 ++----
+ src/pinst.c   | 15 +++++----------
+ src/pobject.c | 10 ++++------
+ src/util.c    |  7 +++----
+ 4 files changed, 14 insertions(+), 24 deletions(-)
+
+diff --git a/src/ckpem.h b/src/ckpem.h
+index e6ecc5f..be9977a 100644
+--- a/src/ckpem.h
++++ b/src/ckpem.h
+@@ -258,10 +258,8 @@ pem_CreateMDObject
+ #define NSS_PEM_ARRAY_SIZE(x) ((sizeof (x))/(sizeof ((x)[0])))
+ 
+ /* Read DER encoded data from a PEM file or a binary (der-encoded) file. */
+-/* NOTE: Discrepancy with the the way callers use of the return value as a count
+- * Fix this when we sync. up with the cleanup work being done at nss-pem project.
+- */
+-SECStatus ReadDERFromFile(SECItem ***derlist, char *filename, PRBool ascii, int *cipher, char **ivstring, PRBool certsonly);
++int ReadDERFromFile(SECItem ***derlist, char *filename, PRBool ascii,
++                    int *cipher, char **ivstring, PRBool certsonly);
+ 
+ /* Fetch an attribute of the specified type. */
+ const NSSItem * pem_FetchAttribute ( pemInternalObject *io, CK_ATTRIBUTE_TYPE type, CK_RV *pError);
+diff --git a/src/pinst.c b/src/pinst.c
+index 25485b1..a5901f0 100644
+--- a/src/pinst.c
++++ b/src/pinst.c
+@@ -474,14 +474,12 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
+     pemInternalObject *o = NULL;
+     CK_RV error = 0;
+     int objid, i = 0;
+-    int nobjs = 0;
+     SECItem **objs = NULL;
+     char *ivstring = NULL;
+     int cipher;
+ 
+-    /* TODO: Fix discrepancy between our usage of the return value as
+-     * as an int (a count) and the declaration as a SECStatus. */
+-    nobjs = (int) ReadDERFromFile(&objs, certfile, PR_TRUE, &cipher, &ivstring, PR_TRUE /* certs only */);
++    int nobjs = ReadDERFromFile(&objs, certfile, /* ascii */ PR_TRUE, &cipher,
++                                &ivstring, /* certs only */ PR_TRUE);
+     if (nobjs <= 0) {
+         NSS_ZFreeIf(objs);
+         return CKR_GENERAL_ERROR;
+@@ -516,12 +514,9 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
+ 
+         if (o != NULL && keyfile != NULL) { /* add the private key */
+             SECItem **keyobjs = NULL;
+-            int kobjs = 0;
+-            /* TODO: Fix discrepancy between our usage of the return value as
+-             * as an int and the declaration as a SECStatus. */
+-            kobjs =
+-                (int) ReadDERFromFile(&keyobjs, keyfile, PR_TRUE, &cipher,
+-                                &ivstring, PR_FALSE);
++            int kobjs = ReadDERFromFile(&keyobjs, keyfile, /* ascii */ PR_TRUE,
++                                        &cipher, &ivstring,
++                                        /*certs only */ PR_FALSE);
+             if (kobjs < 1) {
+                 found_error = PR_TRUE;
+             } else {
+diff --git a/src/pobject.c b/src/pobject.c
+index 918b327..d80092a 100644
+--- a/src/pobject.c
++++ b/src/pobject.c
+@@ -1165,11 +1165,8 @@ pem_CreateObject
+     }
+ 
+     if (objClass == CKO_CERTIFICATE) {
+-        /* TODO: Fix discrepancy between our usage of the return value as
+-         * as an int and the declaration as a SECStatus. Typecasting as a
+-         * temporary workaround.
+-         */
+-        nobjs = (int) ReadDERFromFile(&derlist, filename, PR_TRUE, &cipher, &ivstring, PR_TRUE /* certs only */);
++        nobjs = ReadDERFromFile(&derlist, filename, /* ascii */ PR_TRUE,
++                                &cipher, &ivstring, /* certs only */ PR_TRUE);
+         if (nobjs < 1)
+             goto loser;
+ 
+@@ -1214,7 +1211,8 @@ pem_CreateObject
+         CK_SESSION_HANDLE hSession;
+         PRBool added;
+ 
+-        nobjs = ReadDERFromFile(&derlist, filename, PR_TRUE, &cipher, &ivstring, PR_FALSE /* keys only */);
++        nobjs = ReadDERFromFile(&derlist, filename, /* ascii */ PR_TRUE,
++                                &cipher, &ivstring, /* keys only */ PR_FALSE);
+         if (nobjs < 1)
+             goto loser;
+ 
+diff --git a/src/util.c b/src/util.c
+index ee9e0a4..9bad613 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -144,10 +144,9 @@ static SECStatus ConvertAsciiToZAllocItem(SECItem *der, const char *ascii)
+     return rv;
+ }
+ 
+-/* FIX: Returns a SECStatus yet callers take result as a count */
+-SECStatus
+-ReadDERFromFile(SECItem *** derlist, char *filename, PRBool ascii,
+-		int *cipher, char **ivstring, PRBool certsonly)
++/* returns count of objects read, or -1 on error */
++int ReadDERFromFile(SECItem *** derlist, char *filename, PRBool ascii,
++		    int *cipher, char **ivstring, PRBool certsonly)
+ {
+     SECStatus rv;
+     PRFileDesc *inFile;
+-- 
+2.17.2
+
+
+From 729f16122f0bae216583323389aa6ef1418e4c37 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Thu, 20 Dec 2018 18:42:33 +0100
+Subject: [PATCH 2/5] ckpem: make pem_objs a list instead of array
+
+Since libcurl started to use PK11_CreateManagedGenericObject(),
+the calls to PK11_DestroyGenericObject() started to take affect
+at the level of nss-pem.  Internal objects were removed on each
+call of curl_easy_cleanup() and allocated again on each call of
+curl_easy_perform().  This would be fine if the corresponding items
+of the global pem_objects array were reused, which was, however,
+not the case.  Consequently, the array grew unboundedly while most
+of its items were NULL pointers.  This caused severe performance
+regression in libcurl-based applications.
+
+This commit replaces the global array by a global linked list,
+which allows to delete arbitrary items instead of keeping NULL
+pointers.  For compatibility reasons, the original array indexes
+are stored in the list nodes.
+
+Bug: https://bugzilla.redhat.com/1659108
+
+Fixes #2
+
+Upstream-commit: 8fc25a6b062a34d09473d4f80058fffda37f41a2
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/ckpem.h    |  11 ++-
+ src/list.h     | 200 +++++++++++++++++++++++++++++++++++++++++++++++++
+ src/pfind.c    |  19 ++---
+ src/pinst.c    |  56 +++++++-------
+ src/pobject.c  |  27 +++----
+ src/psession.c |  11 +--
+ 6 files changed, 258 insertions(+), 66 deletions(-)
+ create mode 100644 src/list.h
+
+diff --git a/src/ckpem.h b/src/ckpem.h
+index be9977a..caad74b 100644
+--- a/src/ckpem.h
++++ b/src/ckpem.h
+@@ -39,6 +39,8 @@
+ #ifndef CKPEM_H
+ #define CKPEM_H
+ 
++#include "list.h"
++
+ #define USE_UTIL_DIRECTLY
+ #include <utilrename.h>
+ 
+@@ -197,9 +199,14 @@ struct pemInternalObjectStr {
+   char            *nickname;
+   NSSCKMDObject   mdObject;
+   CK_SLOT_ID      slotID;
+-  CK_ULONG        gobjIndex;
+   int             refCount;
+ 
++  /* all internal objects are linked in a global list */
++  struct list_head gl_list;
++
++  /* we represent sparse array as list but keep its elements indexed */
++  long            arrayIdx;
++
+   /* used by pem_mdFindObjects_Next */
+   CK_BBOOL        extRef;
+ 
+@@ -208,7 +215,7 @@ struct pemInternalObjectStr {
+   pemObjectListItem *list;
+ };
+ 
+-NSS_EXTERN_DATA pemInternalObject **pem_objs;
++NSS_EXTERN_DATA struct list_head pem_objs;
+ NSS_EXTERN_DATA int pem_nobjs;
+ NSS_EXTERN_DATA int token_needsLogin[];
+ 
+diff --git a/src/list.h b/src/list.h
+new file mode 100644
+index 0000000..7b4aec4
+--- /dev/null
++++ b/src/list.h
+@@ -0,0 +1,200 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LINUX_LIST_H
++#define _LINUX_LIST_H
++
++/* simplified for our use case */
++#define READ_ONCE(x) (x)
++#define WRITE_ONCE(dst, src) (dst = (src))
++#define typeof(x) __typeof__(x)
++#define POISON_POINTER_DELTA 0
++
++/* following code is taken from <linux/list.h> of v4.20-rc7-202-g1d51b4b1d3f2 */
++
++/**
++ * container_of - cast a member of a structure out to the containing structure
++ * @ptr:    the pointer to the member.
++ * @type:   the type of the container struct this is embedded in.
++ * @member: the name of the member within the struct.
++ *
++ */
++#define container_of(ptr, type, member) ({              \
++    void *__mptr = (void *)(ptr);                   \
++    ((type *)(__mptr - offsetof(type, member))); })
++
++/*
++ * These are non-NULL pointers that will result in page faults
++ * under normal circumstances, used to verify that nobody uses
++ * non-initialized list entries.
++ */
++#define LIST_POISON1  ((void *) 0x100 + POISON_POINTER_DELTA)
++#define LIST_POISON2  ((void *) 0x200 + POISON_POINTER_DELTA)
++
++struct list_head {
++	struct list_head *next, *prev;
++};
++
++/*
++ * Simple doubly linked list implementation.
++ *
++ * Some of the internal functions ("__xxx") are useful when
++ * manipulating whole lists rather than single entries, as
++ * sometimes we already know the next/prev entries and we can
++ * generate better code by using them directly rather than
++ * using the generic single-entry routines.
++ */
++
++#define LIST_HEAD_INIT(name) { &(name), &(name) }
++
++#define LIST_HEAD(name) \
++	struct list_head name = LIST_HEAD_INIT(name)
++
++static inline void INIT_LIST_HEAD(struct list_head *list)
++{
++	WRITE_ONCE(list->next, list);
++	list->prev = list;
++}
++
++/*
++ * Insert a new entry between two known consecutive entries.
++ *
++ * This is only for internal list manipulation where we know
++ * the prev/next entries already!
++ */
++static inline void __list_add(struct list_head *new,
++			      struct list_head *prev,
++			      struct list_head *next)
++{
++	next->prev = new;
++	new->next = next;
++	new->prev = prev;
++	WRITE_ONCE(prev->next, new);
++}
++
++/**
++ * list_add - add a new entry
++ * @new: new entry to be added
++ * @head: list head to add it after
++ *
++ * Insert a new entry after the specified head.
++ * This is good for implementing stacks.
++ */
++static inline void list_add(struct list_head *new, struct list_head *head)
++{
++	__list_add(new, head, head->next);
++}
++
++
++/**
++ * list_add_tail - add a new entry
++ * @new: new entry to be added
++ * @head: list head to add it before
++ *
++ * Insert a new entry before the specified head.
++ * This is useful for implementing queues.
++ */
++static inline void list_add_tail(struct list_head *new, struct list_head *head)
++{
++	__list_add(new, head->prev, head);
++}
++
++/*
++ * Delete a list entry by making the prev/next entries
++ * point to each other.
++ *
++ * This is only for internal list manipulation where we know
++ * the prev/next entries already!
++ */
++static inline void __list_del(struct list_head * prev, struct list_head * next)
++{
++	next->prev = prev;
++	WRITE_ONCE(prev->next, next);
++}
++
++/**
++ * list_del - deletes entry from list.
++ * @entry: the element to delete from the list.
++ * Note: list_empty() on entry does not return true after this, the entry is
++ * in an undefined state.
++ */
++static inline void __list_del_entry(struct list_head *entry)
++{
++	__list_del(entry->prev, entry->next);
++}
++
++static inline void list_del(struct list_head *entry)
++{
++	__list_del_entry(entry);
++	entry->next = LIST_POISON1;
++	entry->prev = LIST_POISON2;
++}
++
++/**
++ * list_entry - get the struct for this entry
++ * @ptr:	the &struct list_head pointer.
++ * @type:	the type of the struct this is embedded in.
++ * @member:	the name of the list_head within the struct.
++ */
++#define list_entry(ptr, type, member) \
++	container_of(ptr, type, member)
++
++/**
++ * list_first_entry - get the first element from a list
++ * @ptr:	the list head to take the element from.
++ * @type:	the type of the struct this is embedded in.
++ * @member:	the name of the list_head within the struct.
++ *
++ * Note, that list is expected to be not empty.
++ */
++#define list_first_entry(ptr, type, member) \
++	list_entry((ptr)->next, type, member)
++
++/**
++ * list_last_entry - get the last element from a list
++ * @ptr:    the list head to take the element from.
++ * @type:   the type of the struct this is embedded in.
++ * @member: the name of the list_head within the struct.
++ *
++ * Note, that list is expected to be not empty.
++ */
++#define list_last_entry(ptr, type, member) \
++    list_entry((ptr)->prev, type, member)
++
++/**
++ * list_next_entry - get the next element in list
++ * @pos:	the type * to cursor
++ * @member:	the name of the list_head within the struct.
++ */
++#define list_next_entry(pos, member) \
++	list_entry((pos)->member.next, typeof(*(pos)), member)
++
++/**
++ * list_prev_entry - get the prev element in list
++ * @pos:    the type * to cursor
++ * @member: the name of the list_head within the struct.
++ */
++#define list_prev_entry(pos, member) \
++    list_entry((pos)->member.prev, typeof(*(pos)), member)
++
++/**
++ * list_for_each_entry	-	iterate over list of given type
++ * @pos:	the type * to use as a loop cursor.
++ * @head:	the head for your list.
++ * @member:	the name of the list_head within the struct.
++ */
++#define list_for_each_entry(pos, head, member)				\
++	for (pos = list_first_entry(head, typeof(*pos), member);	\
++	     &pos->member != (head);					\
++	     pos = list_next_entry(pos, member))
++
++/**
++ * list_for_each_entry_reverse - iterate backwards over list of given type.
++ * @pos:    the type * to use as a loop cursor.
++ * @head:   the head for your list.
++ * @member: the name of the list_head within the struct.
++ */
++#define list_for_each_entry_reverse(pos, head, member)          \
++    for (pos = list_last_entry(head, typeof(*pos), member);     \
++         &pos->member != (head);                    \
++         pos = list_prev_entry(pos, member))
++
++#endif
+diff --git a/src/pfind.c b/src/pfind.c
+index 2aff8ff..3f0fdcb 100644
+--- a/src/pfind.c
++++ b/src/pfind.c
+@@ -253,12 +253,13 @@ collect_objects(CK_ATTRIBUTE_PTR pTemplate,
+     size_t result_array_capacity = 0;
+     pemObjectType type = pemRaw;
+     CK_OBJECT_CLASS objClass = pem_GetObjectClass(pTemplate, ulAttributeCount);
++    pemInternalObject *obj = NULL;
+ 
+     *pError = CKR_OK;
+ 
+     plog("collect_objects slot #%ld, ", slotID);
+     plog("%d attributes, ", ulAttributeCount);
+-    plog("%d objects to look through.\n", pem_nobjs);
++    plog("%d objects created in total.\n", pem_nobjs);
+     plog("Looking for: ");
+     /*
+      * now determine type of the object
+@@ -299,22 +300,18 @@ collect_objects(CK_ATTRIBUTE_PTR pTemplate,
+     }
+ 
+     /* find objects */
+-    for (i = 0; i < pem_nobjs; i++) {
++    list_for_each_entry(obj, &pem_objs, gl_list) {
+         int match = 1; /* matches type if type not specified */
+-        if (NULL == pem_objs[i])
+-            continue;
+-
+-        plog("  %d type = %d\n", i, pem_objs[i]->type);
++        plog("  %d type = %d\n", i, obj->type);
+         if (type != pemAll) {
+             /* type specified - must match given type */
+-            match = (type == pem_objs[i]->type);
++            match = (type == obj->type);
+         }
+         if (match) {
+-            match = (slotID == pem_objs[i]->slotID) &&
+-                (CK_TRUE == pem_match(pTemplate, ulAttributeCount, pem_objs[i]));
++            match = (slotID == obj->slotID) &&
++                (CK_TRUE == pem_match(pTemplate, ulAttributeCount, obj));
+         }
+         if (match) {
+-            pemInternalObject *o = pem_objs[i];
+             pemInternalObject **new_result_array = (pemInternalObject **)
+                 ensure_array_capacity(*result_array,
+                                       &result_array_capacity,
+@@ -328,7 +325,7 @@ collect_objects(CK_ATTRIBUTE_PTR pTemplate,
+             if (*result_array != new_result_array) {
+                 *result_array = new_result_array;
+             }
+-            (*result_array)[ result_array_entries ] = o;
++            (*result_array)[ result_array_entries ] = obj;
+             result_array_entries++;
+         }
+     }
+diff --git a/src/pinst.c b/src/pinst.c
+index a5901f0..810db5a 100644
+--- a/src/pinst.c
++++ b/src/pinst.c
+@@ -50,7 +50,7 @@
+ 
+ static PRBool pemInitialized = PR_FALSE;
+ 
+-pemInternalObject **pem_objs;
++LIST_HEAD(pem_objs);
+ int pem_nobjs = 0;
+ int token_needsLogin[NUM_SLOTS];
+ 
+@@ -361,13 +361,9 @@ derEncodingsMatch(CK_OBJECT_CLASS objClass, pemInternalObject * obj,
+ static CK_RV
+ LinkSharedKeyObject(int oldKeyIdx, int newKeyIdx)
+ {
+-    int i;
+-    for (i = 0; i < pem_nobjs; i++) {
++    pemInternalObject *obj;
++    list_for_each_entry(obj, &pem_objs, gl_list) {
+         CK_RV rv;
+-        pemInternalObject *obj = pem_objs[i];
+-        if (NULL == obj)
+-            continue;
+-
+         if (atoi(obj->id.data) != oldKeyIdx)
+             continue;
+ 
+@@ -380,13 +376,26 @@ LinkSharedKeyObject(int oldKeyIdx, int newKeyIdx)
+     return CKR_OK;
+ }
+ 
++/* return pointer to the internal object with given arrayIdx */
++static pemInternalObject *
++FindObjectByArrayIdx(const long arrayIdx)
++{
++    pemInternalObject *obj;
++
++    list_for_each_entry(obj, &pem_objs, gl_list)
++        if (arrayIdx == obj->arrayIdx)
++            return obj;
++
++    return NULL;
++}
++
+ pemInternalObject *
+ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+                   pemObjectType type, SECItem * certDER,
+                   SECItem * keyDER, const char *filename,
+                   int objid, CK_SLOT_ID slotID, PRBool *pAdded)
+ {
+-    int i;
++    pemInternalObject *curObj;
+ 
+     const char *nickname = strrchr(filename, '/');
+     if (nickname
+@@ -400,11 +409,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+         *pAdded = PR_FALSE;
+ 
+     /* first look for the object in pem_objs, it might be already there */
+-    for (i = 0; i < pem_nobjs; i++) {
+-        pemInternalObject *const curObj = pem_objs[i];
+-        if (NULL == curObj)
+-            continue;
+-
++    list_for_each_entry(curObj, &pem_objs, gl_list) {
+         /* Comparing DER encodings is dependable and frees the PEM module
+          * from having to require clients to provide unique nicknames.
+          */
+@@ -418,11 +423,11 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+              * the key object is shared by multiple client certificates, such
+              * an assumption does not hold.  We have to update the references.
+              */
+-            LinkSharedKeyObject(pem_nobjs, i);
++            LinkSharedKeyObject(pem_nobjs, curObj->arrayIdx);
+ 
+             if (CKO_CERTIFICATE == objClass) {
+                 const int ref = atoi(curObj->id.data);
+-                if (0 < ref && ref < pem_nobjs && !pem_objs[ref]) {
++                if (0 < ref && ref < pem_nobjs && !FindObjectByArrayIdx(ref)) {
+                     /* The certificate we are going to reuse refers to an
+                      * object that has already been removed.  Make it refer
+                      * to the object that will be added next (private key).
+@@ -432,7 +437,8 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+                 }
+             }
+ 
+-            plog("AddObjectIfNeeded: re-using internal object #%i\n", i);
++            plog("AddObjectIfNeeded: re-using internal object #%li\n",
++                 curObj->arrayIdx);
+             curObj->refCount ++;
+             return curObj;
+         }
+@@ -447,18 +453,9 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+     /* initialize pointers to functions */
+     pem_CreateMDObject(NULL, io, NULL);
+ 
+-    io->gobjIndex = pem_nobjs;
+-
+-    /* add object to global array */
+-    if (pem_objs)
+-        pem_objs = NSS_ZRealloc(pem_objs,
+-                (pem_nobjs + 1) * sizeof(pemInternalObject *));
+-    else
+-        pem_objs = NSS_ZNEWARRAY(NULL, pemInternalObject *, 1);
+-    if (!pem_objs)
+-        return NULL;
+-    pem_objs[pem_nobjs] = io;
+-    pem_nobjs++;
++    /* add object to global list */
++    io->arrayIdx = pem_nobjs++;
++    list_add_tail(&io->gl_list, &pem_objs);
+ 
+     if (pAdded)
+         *pAdded = PR_TRUE;
+@@ -747,8 +744,7 @@ pem_Finalize
+     if (!pemInitialized)
+         return;
+ 
+-    NSS_ZFreeIf(pem_objs);
+-    pem_objs = NULL;
++    INIT_LIST_HEAD(&pem_objs);
+     pem_nobjs = 0;
+ 
+     PR_AtomicSet(&pemInitialized, PR_FALSE);
+diff --git a/src/pobject.c b/src/pobject.c
+index d80092a..f118f5d 100644
+--- a/src/pobject.c
++++ b/src/pobject.c
+@@ -672,10 +672,8 @@ pem_DestroyInternalObject
+         return;
+     }
+ 
+-    if (NULL != pem_objs)
+-        /* remove reference to self from the global array */
+-        pem_objs[io->gobjIndex] = NULL;
+-
++    /* remove self from the global list */
++    list_del(&io->gl_list);
+     NSS_ZFreeIf(io);
+     return;
+ }
+@@ -1206,7 +1204,7 @@ pem_CreateObject
+                 goto loser;
+         }
+     } else if (objClass == CKO_PRIVATE_KEY) {
+-        int i;
++        pemInternalObject *curObj;
+         SECItem certDER;
+         CK_SESSION_HANDLE hSession;
+         PRBool added;
+@@ -1221,30 +1219,27 @@ pem_CreateObject
+ 
+         /* Brute force: find the id of the certificate, if any, in this slot */
+         objid = -1;
+-        for (i = pem_nobjs - 1; 0 <= i; i--) {
+-            if (NULL == pem_objs[i])
+-                continue;
+-
+-            if (slotID != pem_objs[i]->slotID)
++        list_for_each_entry_reverse(curObj, &pem_objs, gl_list) {
++            if (slotID != curObj->slotID)
+                 continue;
+ 
+-            if (pem_objs[i]->type != pemCert)
++            if (curObj->type != pemCert)
+                 continue;
+ 
+-            if (atoi(pem_objs[i]->id.data) != pem_nobjs)
++            if (atoi(curObj->id.data) != pem_nobjs)
+                 /* not a certificate that refers to the key being added */
+                 continue;
+ 
+             objid = pem_nobjs;
+-            certDER.data = NSS_ZAlloc(NULL, pem_objs[i]->derCert->len);
++            certDER.data = NSS_ZAlloc(NULL, curObj->derCert->len);
+ 
+             if (certDER.data == NULL)
+                 goto loser;
+ 
+-            certDER.len = pem_objs[i]->derCert->len;
++            certDER.len = curObj->derCert->len;
+             memcpy(certDER.data,
+-                    pem_objs[i]->derCert->data,
+-                    pem_objs[i]->derCert->len);
++                    curObj->derCert->data,
++                    curObj->derCert->len);
+             break;
+         }
+ 
+diff --git a/src/psession.c b/src/psession.c
+index 4e94a7f..13a5e5d 100644
+--- a/src/psession.c
++++ b/src/psession.c
+@@ -241,7 +241,7 @@ pem_mdSession_Login
+     NSSLOWKEYPrivateKey *lpk = NULL;
+     PLArenaPool *arena;
+     SECItem plain;
+-    int i;
++    pemInternalObject *curObj;
+ 
+     fwSlot = NSSCKFWToken_GetFWSlot(fwToken);
+     slotID = NSSCKFWSlot_GetSlotID(fwSlot);
+@@ -256,12 +256,9 @@ pem_mdSession_Login
+     token_needsLogin[slotID - 1] = PR_FALSE;
+ 
+     /* Find the right key object */
+-    for (i = 0; i < pem_nobjs; i++) {
+-        if (NULL == pem_objs[i])
+-            continue;
+-
+-        if ((slotID == pem_objs[i]->slotID) && (pem_objs[i]->type == pemBareKey)) {
+-            io = pem_objs[i];
++    list_for_each_entry(curObj, &pem_objs, gl_list) {
++        if ((slotID == curObj->slotID) && (curObj->type == pemBareKey)) {
++            io = curObj;
+             break;
+         }
+     }
+-- 
+2.17.2
+
+
+From 6d968e0f54bfd48029086ae41067e6024bde76a2 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 21 Dec 2018 13:43:47 +0100
+Subject: [PATCH 3/5] ckpem: define pem_nobjs and objid as long to avoid
+ wraparound
+
+Fixes #2
+
+Upstream-commit: 5a14b625f529b35f997f60f4ff302f0bfc6ddc16
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/ckpem.h   |  4 ++--
+ src/pfind.c   |  2 +-
+ src/pinst.c   | 29 +++++++++++++++--------------
+ src/pobject.c |  4 ++--
+ 4 files changed, 20 insertions(+), 19 deletions(-)
+
+diff --git a/src/ckpem.h b/src/ckpem.h
+index caad74b..5d05087 100644
+--- a/src/ckpem.h
++++ b/src/ckpem.h
+@@ -216,7 +216,7 @@ struct pemInternalObjectStr {
+ };
+ 
+ NSS_EXTERN_DATA struct list_head pem_objs;
+-NSS_EXTERN_DATA int pem_nobjs;
++NSS_EXTERN_DATA long pem_nobjs;
+ NSS_EXTERN_DATA int token_needsLogin[];
+ 
+ struct pemTokenStr {
+@@ -303,7 +303,7 @@ PRBool pem_ParseString(const char *inputstring, const char delimiter,
+ 
+ pemInternalObject *
+ AddObjectIfNeeded(CK_OBJECT_CLASS objClass, pemObjectType type,
+-                  SECItem *certDER, SECItem *keyDER, const char *filename, int objid,
++                  SECItem *certDER, SECItem *keyDER, const char *filename, long objid,
+                   CK_SLOT_ID slotID, PRBool *pAdded);
+ 
+ void pem_DestroyInternalObject (pemInternalObject *io);
+diff --git a/src/pfind.c b/src/pfind.c
+index 3f0fdcb..958c0d5 100644
+--- a/src/pfind.c
++++ b/src/pfind.c
+@@ -259,7 +259,7 @@ collect_objects(CK_ATTRIBUTE_PTR pTemplate,
+ 
+     plog("collect_objects slot #%ld, ", slotID);
+     plog("%d attributes, ", ulAttributeCount);
+-    plog("%d objects created in total.\n", pem_nobjs);
++    plog("%ld objects created in total.\n", pem_nobjs);
+     plog("Looking for: ");
+     /*
+      * now determine type of the object
+diff --git a/src/pinst.c b/src/pinst.c
+index 810db5a..87bf7c2 100644
+--- a/src/pinst.c
++++ b/src/pinst.c
+@@ -51,7 +51,7 @@
+ static PRBool pemInitialized = PR_FALSE;
+ 
+ LIST_HEAD(pem_objs);
+-int pem_nobjs = 0;
++long pem_nobjs = 0L;
+ int token_needsLogin[NUM_SLOTS];
+ 
+ /*
+@@ -181,12 +181,12 @@ GetCertFields(unsigned char *cert, int cert_length,
+ }
+ 
+ static CK_RV
+-assignObjectID(pemInternalObject *o, int objid)
++assignObjectID(pemInternalObject *o, const long objid)
+ {
+-    char id[16];
++    char id[24];
+     int len;
+ 
+-    sprintf(id, "%d", objid);
++    sprintf(id, "%ld", objid);
+     len = strlen(id) + 1;       /* zero terminate */
+     o->id.size = len;
+     o->id.data = NSS_ZAlloc(NULL, len);
+@@ -201,7 +201,7 @@ static pemInternalObject *
+ CreateObject(CK_OBJECT_CLASS objClass,
+              pemObjectType type, SECItem * certDER,
+              SECItem * keyDER, const char *filename,
+-             int objid, CK_SLOT_ID slotID)
++             long objid, CK_SLOT_ID slotID)
+ {
+     pemInternalObject *o;
+     SECItem subject;
+@@ -225,17 +225,17 @@ CreateObject(CK_OBJECT_CLASS objClass,
+ 
+     switch (objClass) {
+     case CKO_CERTIFICATE:
+-        plog("Creating cert nick %s id %d in slot %ld\n", nickname, objid, slotID);
++        plog("Creating cert nick %s id %ld in slot %ld\n", nickname, objid, slotID);
+         memset(&o->u.cert, 0, sizeof(o->u.cert));
+         break;
+     case CKO_PRIVATE_KEY:
+-        plog("Creating key id %d in slot %ld\n", objid, slotID);
++        plog("Creating key id %ld in slot %ld\n", objid, slotID);
+         memset(&o->u.key, 0, sizeof(o->u.key));
+         /* more unique nicknames - https://bugzilla.redhat.com/689031#c66 */
+         nickname = filename;
+         break;
+     case CKO_NETSCAPE_TRUST:
+-        plog("Creating trust nick %s id %d in slot %ld\n", nickname, objid, slotID);
++        plog("Creating trust nick %s id %ld in slot %ld\n", nickname, objid, slotID);
+         memset(&o->u.trust, 0, sizeof(o->u.trust));
+         break;
+     }
+@@ -359,12 +359,12 @@ derEncodingsMatch(CK_OBJECT_CLASS objClass, pemInternalObject * obj,
+ }
+ 
+ static CK_RV
+-LinkSharedKeyObject(int oldKeyIdx, int newKeyIdx)
++LinkSharedKeyObject(const long oldKeyIdx, const long newKeyIdx)
+ {
+     pemInternalObject *obj;
+     list_for_each_entry(obj, &pem_objs, gl_list) {
+         CK_RV rv;
+-        if (atoi(obj->id.data) != oldKeyIdx)
++        if (atol(obj->id.data) != oldKeyIdx)
+             continue;
+ 
+         NSS_ZFreeIf(obj->id.data);
+@@ -393,7 +393,7 @@ pemInternalObject *
+ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+                   pemObjectType type, SECItem * certDER,
+                   SECItem * keyDER, const char *filename,
+-                  int objid, CK_SLOT_ID slotID, PRBool *pAdded)
++                  long objid, CK_SLOT_ID slotID, PRBool *pAdded)
+ {
+     pemInternalObject *curObj;
+ 
+@@ -426,7 +426,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+             LinkSharedKeyObject(pem_nobjs, curObj->arrayIdx);
+ 
+             if (CKO_CERTIFICATE == objClass) {
+-                const int ref = atoi(curObj->id.data);
++                const long ref = atol(curObj->id.data);
+                 if (0 < ref && ref < pem_nobjs && !FindObjectByArrayIdx(ref)) {
+                     /* The certificate we are going to reuse refers to an
+                      * object that has already been removed.  Make it refer
+@@ -470,7 +470,8 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
+ {
+     pemInternalObject *o = NULL;
+     CK_RV error = 0;
+-    int objid, i = 0;
++    long objid;
++    int i = 0;
+     SECItem **objs = NULL;
+     char *ivstring = NULL;
+     int cipher;
+@@ -745,7 +746,7 @@ pem_Finalize
+         return;
+ 
+     INIT_LIST_HEAD(&pem_objs);
+-    pem_nobjs = 0;
++    pem_nobjs = 0L;
+ 
+     PR_AtomicSet(&pemInitialized, PR_FALSE);
+ }
+diff --git a/src/pobject.c b/src/pobject.c
+index f118f5d..9a8321c 100644
+--- a/src/pobject.c
++++ b/src/pobject.c
+@@ -1089,7 +1089,7 @@ pem_CreateObject
+     SECItem **derlist = NULL;
+     int nobjs = 0;
+     int i;
+-    int objid;
++    long objid;
+ #if 0
+     pemToken *token;
+ #endif
+@@ -1226,7 +1226,7 @@ pem_CreateObject
+             if (curObj->type != pemCert)
+                 continue;
+ 
+-            if (atoi(curObj->id.data) != pem_nobjs)
++            if (atol(curObj->id.data) != pem_nobjs)
+                 /* not a certificate that refers to the key being added */
+                 continue;
+ 
+-- 
+2.17.2
+
+
+From 513ac624ec4c640f53f2bcdee11dc332358b77d7 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 21 Dec 2018 14:26:01 +0100
+Subject: [PATCH 4/5] ckpem: keep objid as number to avoid use of atol()
+
+Fixes #2
+
+Upstream-commit: 188c63f7b824e256d20b70ee080ea88d96d8e9c6
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/ckpem.h   | 1 +
+ src/pinst.c   | 5 +++--
+ src/pobject.c | 2 +-
+ 3 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/ckpem.h b/src/ckpem.h
+index 5d05087..e2f18cf 100644
+--- a/src/ckpem.h
++++ b/src/ckpem.h
+@@ -194,6 +194,7 @@ struct pemInternalObjectStr {
+   CK_OBJECT_CLASS objClass;
+   NSSItem         hashKey;
+   NSSItem         id;
++  long            objid;
+   unsigned char   hashKeyData[128];
+   SECItem         *derCert;
+   char            *nickname;
+diff --git a/src/pinst.c b/src/pinst.c
+index 87bf7c2..26f3ac2 100644
+--- a/src/pinst.c
++++ b/src/pinst.c
+@@ -194,6 +194,7 @@ assignObjectID(pemInternalObject *o, const long objid)
+         return CKR_HOST_MEMORY;
+ 
+     memcpy(o->id.data, id, len);
++    o->objid = objid;
+     return CKR_OK;
+ }
+ 
+@@ -364,7 +365,7 @@ LinkSharedKeyObject(const long oldKeyIdx, const long newKeyIdx)
+     pemInternalObject *obj;
+     list_for_each_entry(obj, &pem_objs, gl_list) {
+         CK_RV rv;
+-        if (atol(obj->id.data) != oldKeyIdx)
++        if (obj->objid != oldKeyIdx)
+             continue;
+ 
+         NSS_ZFreeIf(obj->id.data);
+@@ -426,7 +427,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+             LinkSharedKeyObject(pem_nobjs, curObj->arrayIdx);
+ 
+             if (CKO_CERTIFICATE == objClass) {
+-                const long ref = atol(curObj->id.data);
++                const long ref = curObj->objid;
+                 if (0 < ref && ref < pem_nobjs && !FindObjectByArrayIdx(ref)) {
+                     /* The certificate we are going to reuse refers to an
+                      * object that has already been removed.  Make it refer
+diff --git a/src/pobject.c b/src/pobject.c
+index 9a8321c..2ffffed 100644
+--- a/src/pobject.c
++++ b/src/pobject.c
+@@ -1226,7 +1226,7 @@ pem_CreateObject
+             if (curObj->type != pemCert)
+                 continue;
+ 
+-            if (atol(curObj->id.data) != pem_nobjs)
++            if (curObj->objid != pem_nobjs)
+                 /* not a certificate that refers to the key being added */
+                 continue;
+ 
+-- 
+2.17.2
+
+
+From db140f2d9259ac73d59c50a658d444e418b81c3c Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Wed, 16 Jan 2019 16:19:50 +0100
+Subject: [PATCH 5/5] pfind: fix use of uninitialized var in plog() call
+
+Detected by static analysis:
+
+Error: UNINIT (CWE-457):
+nss-pem-1.0.3/src/pfind.c:251: var_decl: Declaring variable "i" without initializer.
+nss-pem-1.0.3/src/pfind.c:305: uninit_use_in_call: Using uninitialized value "i" when calling "plog".
+  303|       list_for_each_entry(obj, &pem_objs, gl_list) {
+  304|           int match = 1; /* matches type if type not specified */
+  305|->         plog("  %d type = %d\n", i, obj->type);
+  306|           if (type != pemAll) {
+  307|               /* type specified - must match given type */
+
+Error: CLANG_WARNING:
+nss-pem-1.0.3/src/pfind.c:305:9: warning: Function call argument is an uninitialized value
+nss-pem-1.0.3/src/pfind.c:364:9: note: Assuming 'fwSlot' is not equal to null
+nss-pem-1.0.3/src/pfind.c:364:5: note: Taking false branch
+nss-pem-1.0.3/src/pfind.c:370:9: note: Assuming 'arena' is not equal to null
+nss-pem-1.0.3/src/pfind.c:370:5: note: Taking false branch
+nss-pem-1.0.3/src/pfind.c:375:9: note: Assuming 'rv' is not equal to null
+nss-pem-1.0.3/src/pfind.c:375:5: note: Taking false branch
+nss-pem-1.0.3/src/pfind.c:381:9: note: Assuming 'fo' is not equal to null
+nss-pem-1.0.3/src/pfind.c:381:5: note: Taking false branch
+nss-pem-1.0.3/src/pfind.c:395:9: note: Calling 'collect_objects'
+nss-pem-1.0.3/src/pfind.c:251:5: note: 'i' declared without an initial value
+nss-pem-1.0.3/src/pfind.c:267:5: note: Control jumps to 'case 0:'  at line 293
+nss-pem-1.0.3/src/pfind.c:296:9: note:  Execution continues on line 303
+nss-pem-1.0.3/src/pfind.c:305:9: note: Function call argument is an uninitialized value
+
+Error: COMPILER_WARNING:
+nss-pem-1.0.3/src/pfind.c: scope_hint: In function 'pem_FindObjectsInit'
+nss-pem-1.0.3/src/pfind.c:305:13: warning: 'i' may be used uninitialized in this function [-Wmaybe-uninitialized]
+nss-pem-1.0.3/src/pfind.c:251:14: note: 'i' was declared here
+
+Upstream-commit: 5c05ed268675c7544b1a51198e1e9e566be17608
+Signed-off-by: Kamil Dudka <kdudka@redhat.com>
+---
+ src/pfind.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/pfind.c b/src/pfind.c
+index 958c0d5..83d5b89 100644
+--- a/src/pfind.c
++++ b/src/pfind.c
+@@ -248,7 +248,6 @@ collect_objects(CK_ATTRIBUTE_PTR pTemplate,
+                 pemInternalObject *** result_array,
+                 CK_RV * pError, CK_SLOT_ID slotID)
+ {
+-    PRUint32 i;
+     size_t result_array_entries = 0;
+     size_t result_array_capacity = 0;
+     pemObjectType type = pemRaw;
+@@ -302,7 +301,7 @@ collect_objects(CK_ATTRIBUTE_PTR pTemplate,
+     /* find objects */
+     list_for_each_entry(obj, &pem_objs, gl_list) {
+         int match = 1; /* matches type if type not specified */
+-        plog("  %d type = %d\n", i, obj->type);
++        plog("  %ld type = %d\n", obj->arrayIdx, obj->type);
+         if (type != pemAll) {
+             /* type specified - must match given type */
+             match = (type == obj->type);
+-- 
+2.17.2
+
