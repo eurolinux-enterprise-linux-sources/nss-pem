@@ -1,12 +1,11 @@
 Name:       nss-pem
 Version:    1.0.3
-Release:    5%{?dist}.1
+Release:    7%{?dist}
 Summary:    PEM file reader for Network Security Services (NSS)
 
 License:    MPLv1.1
 URL:        https://github.com/kdudka/nss-pem
 Source0:    https://github.com/kdudka/nss-pem/releases/download/%{name}-%{version}/%{name}-%{version}.tar.xz
-Patch1:     0001-nss-pem-1.0.3-drop-wait-for-slot-event-cb.patch
 
 # update object ID while reusing a certificate (#1610998)
 Patch2:     0002-nss-pem-1.0.3-key-reload.patch
@@ -29,7 +28,6 @@ module.
 
 %prep
 %setup -q
-%patch1 -p1
 %patch2 -p1
 %patch3 -p1
 
@@ -52,7 +50,10 @@ ctest %{?_smp_mflags} --output-on-failure
 %license COPYING
 
 %changelog
-* Mon Jan 14 2019 Kamil Dudka <kdudka@redhat.com> 1.0.3-5.el7_6.1
+* Wed Feb 27 2019 Kamil Dudka <kdudka@redhat.com> 1.0.3-7
+- reintroduce implementation of the WaitForSlotEvent callback (#1615980)
+
+* Mon Jan 14 2019 Kamil Dudka <kdudka@redhat.com> 1.0.3-6
 - fix performance regression in libcurl (#1659108)
 
 * Wed Aug 08 2018 Kamil Dudka <kdudka@redhat.com> 1.0.3-5

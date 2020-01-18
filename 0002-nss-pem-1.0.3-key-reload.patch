@@ -24,8 +24,8 @@ index e8891d0..c8539f2 100644
 -        /* Brute force: find the id of the certificate, if any, in this slot */
          int i;
          SECItem certDER;
-         CK_SESSION_HANDLE hSession;
-@@ -1222,24 +1221,28 @@ pem_CreateObject
+         PRBool added;
+@@ -1221,24 +1220,28 @@ pem_CreateObject
          certDER.len = 0; /* in case there is no equivalent cert */
          certDER.data = NULL;
  
@@ -88,7 +88,7 @@ diff --git a/src/pobject.c b/src/pobject.c
 index c8539f2..34d0b5a 100644
 --- a/src/pobject.c
 +++ b/src/pobject.c
-@@ -1223,7 +1223,7 @@ pem_CreateObject
+@@ -1222,7 +1222,7 @@ pem_CreateObject
  
          /* Brute force: find the id of the certificate, if any, in this slot */
          objid = -1;
@@ -97,7 +97,7 @@ index c8539f2..34d0b5a 100644
              if (NULL == pem_objs[i])
                  continue;
  
-@@ -1243,6 +1243,7 @@ pem_CreateObject
+@@ -1242,6 +1242,7 @@ pem_CreateObject
              memcpy(certDER.data,
                      pem_objs[i]->derCert->data,
                      pem_objs[i]->derCert->len);
@@ -129,7 +129,7 @@ diff --git a/src/pobject.c b/src/pobject.c
 index 34d0b5a..918b327 100644
 --- a/src/pobject.c
 +++ b/src/pobject.c
-@@ -1233,7 +1233,11 @@ pem_CreateObject
+@@ -1232,7 +1232,11 @@ pem_CreateObject
              if (pem_objs[i]->type != pemCert)
                  continue;
  
@@ -164,7 +164,7 @@ diff --git a/src/pinst.c b/src/pinst.c
 index 5ac0ff3..c54cbe2 100644
 --- a/src/pinst.c
 +++ b/src/pinst.c
-@@ -401,16 +401,17 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -402,16 +402,17 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
  
      /* first look for the object in pem_objs, it might be already there */
      for (i = 0; i < pem_nobjs; i++) {
@@ -187,7 +187,7 @@ index 5ac0ff3..c54cbe2 100644
  
              /* While adding a client certificate we (wrongly?) assumed that the
               * key object will follow right after the cert object.  However, if
-@@ -420,8 +421,8 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -421,8 +422,8 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
              LinkSharedKeyObject(pem_nobjs, i);
  
              plog("AddObjectIfNeeded: re-using internal object #%i\n", i);
@@ -222,7 +222,7 @@ diff --git a/src/pinst.c b/src/pinst.c
 index c54cbe2..25485b1 100644
 --- a/src/pinst.c
 +++ b/src/pinst.c
-@@ -420,6 +420,18 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -421,6 +421,18 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
               */
              LinkSharedKeyObject(pem_nobjs, i);
  

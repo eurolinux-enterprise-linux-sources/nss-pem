@@ -18,7 +18,7 @@ diff --git a/src/ckpem.h b/src/ckpem.h
 index e6ecc5f..be9977a 100644
 --- a/src/ckpem.h
 +++ b/src/ckpem.h
-@@ -258,10 +258,8 @@ pem_CreateMDObject
+@@ -259,10 +259,8 @@ pem_CreateMDObject
  #define NSS_PEM_ARRAY_SIZE(x) ((sizeof (x))/(sizeof ((x)[0])))
  
  /* Read DER encoded data from a PEM file or a binary (der-encoded) file. */
@@ -35,7 +35,7 @@ diff --git a/src/pinst.c b/src/pinst.c
 index 25485b1..a5901f0 100644
 --- a/src/pinst.c
 +++ b/src/pinst.c
-@@ -474,14 +474,12 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
+@@ -475,14 +475,12 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
      pemInternalObject *o = NULL;
      CK_RV error = 0;
      int objid, i = 0;
@@ -52,7 +52,7 @@ index 25485b1..a5901f0 100644
      if (nobjs <= 0) {
          NSS_ZFreeIf(objs);
          return CKR_GENERAL_ERROR;
-@@ -516,12 +514,9 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
+@@ -517,12 +515,9 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
  
          if (o != NULL && keyfile != NULL) { /* add the private key */
              SECItem **keyobjs = NULL;
@@ -86,8 +86,8 @@ index 918b327..d80092a 100644
          if (nobjs < 1)
              goto loser;
  
-@@ -1214,7 +1211,8 @@ pem_CreateObject
-         CK_SESSION_HANDLE hSession;
+@@ -1213,7 +1210,8 @@ pem_CreateObject
+         SECItem certDER;
          PRBool added;
  
 -        nobjs = ReadDERFromFile(&derlist, filename, PR_TRUE, &cipher, &ivstring, PR_FALSE /* keys only */);
@@ -191,7 +191,7 @@ index be9977a..caad74b 100644
 +NSS_EXTERN_DATA struct list_head pem_objs;
  NSS_EXTERN_DATA int pem_nobjs;
  NSS_EXTERN_DATA int token_needsLogin[];
- 
+ NSS_EXTERN_DATA NSSCKMDSlot *lastEventSlot;
 diff --git a/src/list.h b/src/list.h
 new file mode 100644
 index 0000000..7b4aec4
@@ -466,8 +466,8 @@ index a5901f0..810db5a 100644
 +LIST_HEAD(pem_objs);
  int pem_nobjs = 0;
  int token_needsLogin[NUM_SLOTS];
- 
-@@ -361,13 +361,9 @@ derEncodingsMatch(CK_OBJECT_CLASS objClass, pemInternalObject * obj,
+ NSSCKMDSlot *lastEventSlot;
+@@ -362,13 +362,9 @@ derEncodingsMatch(CK_OBJECT_CLASS objClass, pemInternalObject * obj,
  static CK_RV
  LinkSharedKeyObject(int oldKeyIdx, int newKeyIdx)
  {
@@ -483,7 +483,7 @@ index a5901f0..810db5a 100644
          if (atoi(obj->id.data) != oldKeyIdx)
              continue;
  
-@@ -380,13 +376,26 @@ LinkSharedKeyObject(int oldKeyIdx, int newKeyIdx)
+@@ -381,13 +377,26 @@ LinkSharedKeyObject(int oldKeyIdx, int newKeyIdx)
      return CKR_OK;
  }
  
@@ -511,7 +511,7 @@ index a5901f0..810db5a 100644
  
      const char *nickname = strrchr(filename, '/');
      if (nickname
-@@ -400,11 +409,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -401,11 +410,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
          *pAdded = PR_FALSE;
  
      /* first look for the object in pem_objs, it might be already there */
@@ -524,7 +524,7 @@ index a5901f0..810db5a 100644
          /* Comparing DER encodings is dependable and frees the PEM module
           * from having to require clients to provide unique nicknames.
           */
-@@ -418,11 +423,11 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -419,11 +424,11 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
               * the key object is shared by multiple client certificates, such
               * an assumption does not hold.  We have to update the references.
               */
@@ -538,7 +538,7 @@ index a5901f0..810db5a 100644
                      /* The certificate we are going to reuse refers to an
                       * object that has already been removed.  Make it refer
                       * to the object that will be added next (private key).
-@@ -432,7 +437,8 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -433,7 +438,8 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
                  }
              }
  
@@ -548,7 +548,7 @@ index a5901f0..810db5a 100644
              curObj->refCount ++;
              return curObj;
          }
-@@ -447,18 +453,9 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -448,18 +454,9 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
      /* initialize pointers to functions */
      pem_CreateMDObject(NULL, io, NULL);
  
@@ -570,7 +570,7 @@ index a5901f0..810db5a 100644
  
      if (pAdded)
          *pAdded = PR_TRUE;
-@@ -747,8 +744,7 @@ pem_Finalize
+@@ -748,8 +745,7 @@ pem_Finalize
      if (!pemInitialized)
          return;
  
@@ -604,9 +604,9 @@ index d80092a..f118f5d 100644
 -        int i;
 +        pemInternalObject *curObj;
          SECItem certDER;
-         CK_SESSION_HANDLE hSession;
          PRBool added;
-@@ -1221,30 +1219,27 @@ pem_CreateObject
+ 
+@@ -1220,30 +1218,27 @@ pem_CreateObject
  
          /* Brute force: find the id of the certificate, if any, in this slot */
          objid = -1;
@@ -706,9 +706,9 @@ index caad74b..5d05087 100644
 -NSS_EXTERN_DATA int pem_nobjs;
 +NSS_EXTERN_DATA long pem_nobjs;
  NSS_EXTERN_DATA int token_needsLogin[];
+ NSS_EXTERN_DATA NSSCKMDSlot *lastEventSlot;
  
- struct pemTokenStr {
-@@ -303,7 +303,7 @@ PRBool pem_ParseString(const char *inputstring, const char delimiter,
+@@ -304,7 +304,7 @@ PRBool pem_ParseString(const char *inputstring, const char delimiter,
  
  pemInternalObject *
  AddObjectIfNeeded(CK_OBJECT_CLASS objClass, pemObjectType type,
@@ -741,9 +741,9 @@ index 810db5a..87bf7c2 100644
 -int pem_nobjs = 0;
 +long pem_nobjs = 0L;
  int token_needsLogin[NUM_SLOTS];
+ NSSCKMDSlot *lastEventSlot;
  
- /*
-@@ -181,12 +181,12 @@ GetCertFields(unsigned char *cert, int cert_length,
+@@ -182,12 +182,12 @@ GetCertFields(unsigned char *cert, int cert_length,
  }
  
  static CK_RV
@@ -759,7 +759,7 @@ index 810db5a..87bf7c2 100644
      len = strlen(id) + 1;       /* zero terminate */
      o->id.size = len;
      o->id.data = NSS_ZAlloc(NULL, len);
-@@ -201,7 +201,7 @@ static pemInternalObject *
+@@ -202,7 +202,7 @@ static pemInternalObject *
  CreateObject(CK_OBJECT_CLASS objClass,
               pemObjectType type, SECItem * certDER,
               SECItem * keyDER, const char *filename,
@@ -768,7 +768,7 @@ index 810db5a..87bf7c2 100644
  {
      pemInternalObject *o;
      SECItem subject;
-@@ -225,17 +225,17 @@ CreateObject(CK_OBJECT_CLASS objClass,
+@@ -226,17 +226,17 @@ CreateObject(CK_OBJECT_CLASS objClass,
  
      switch (objClass) {
      case CKO_CERTIFICATE:
@@ -789,7 +789,7 @@ index 810db5a..87bf7c2 100644
          memset(&o->u.trust, 0, sizeof(o->u.trust));
          break;
      }
-@@ -359,12 +359,12 @@ derEncodingsMatch(CK_OBJECT_CLASS objClass, pemInternalObject * obj,
+@@ -360,12 +360,12 @@ derEncodingsMatch(CK_OBJECT_CLASS objClass, pemInternalObject * obj,
  }
  
  static CK_RV
@@ -804,7 +804,7 @@ index 810db5a..87bf7c2 100644
              continue;
  
          NSS_ZFreeIf(obj->id.data);
-@@ -393,7 +393,7 @@ pemInternalObject *
+@@ -394,7 +394,7 @@ pemInternalObject *
  AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
                    pemObjectType type, SECItem * certDER,
                    SECItem * keyDER, const char *filename,
@@ -813,7 +813,7 @@ index 810db5a..87bf7c2 100644
  {
      pemInternalObject *curObj;
  
-@@ -426,7 +426,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -427,7 +427,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
              LinkSharedKeyObject(pem_nobjs, curObj->arrayIdx);
  
              if (CKO_CERTIFICATE == objClass) {
@@ -822,7 +822,7 @@ index 810db5a..87bf7c2 100644
                  if (0 < ref && ref < pem_nobjs && !FindObjectByArrayIdx(ref)) {
                      /* The certificate we are going to reuse refers to an
                       * object that has already been removed.  Make it refer
-@@ -470,7 +470,8 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
+@@ -471,7 +471,8 @@ AddCertificate(char *certfile, char *keyfile, PRBool cacert,
  {
      pemInternalObject *o = NULL;
      CK_RV error = 0;
@@ -832,7 +832,7 @@ index 810db5a..87bf7c2 100644
      SECItem **objs = NULL;
      char *ivstring = NULL;
      int cipher;
-@@ -745,7 +746,7 @@ pem_Finalize
+@@ -746,7 +747,7 @@ pem_Finalize
          return;
  
      INIT_LIST_HEAD(&pem_objs);
@@ -854,7 +854,7 @@ index f118f5d..9a8321c 100644
  #if 0
      pemToken *token;
  #endif
-@@ -1226,7 +1226,7 @@ pem_CreateObject
+@@ -1225,7 +1225,7 @@ pem_CreateObject
              if (curObj->type != pemCert)
                  continue;
  
@@ -898,7 +898,7 @@ diff --git a/src/pinst.c b/src/pinst.c
 index 87bf7c2..26f3ac2 100644
 --- a/src/pinst.c
 +++ b/src/pinst.c
-@@ -194,6 +194,7 @@ assignObjectID(pemInternalObject *o, const long objid)
+@@ -195,6 +195,7 @@ assignObjectID(pemInternalObject *o, const long objid)
          return CKR_HOST_MEMORY;
  
      memcpy(o->id.data, id, len);
@@ -906,7 +906,7 @@ index 87bf7c2..26f3ac2 100644
      return CKR_OK;
  }
  
-@@ -364,7 +365,7 @@ LinkSharedKeyObject(const long oldKeyIdx, const long newKeyIdx)
+@@ -365,7 +366,7 @@ LinkSharedKeyObject(const long oldKeyIdx, const long newKeyIdx)
      pemInternalObject *obj;
      list_for_each_entry(obj, &pem_objs, gl_list) {
          CK_RV rv;
@@ -915,7 +915,7 @@ index 87bf7c2..26f3ac2 100644
              continue;
  
          NSS_ZFreeIf(obj->id.data);
-@@ -426,7 +427,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
+@@ -427,7 +428,7 @@ AddObjectIfNeeded(CK_OBJECT_CLASS objClass,
              LinkSharedKeyObject(pem_nobjs, curObj->arrayIdx);
  
              if (CKO_CERTIFICATE == objClass) {
@@ -928,7 +928,7 @@ diff --git a/src/pobject.c b/src/pobject.c
 index 9a8321c..2ffffed 100644
 --- a/src/pobject.c
 +++ b/src/pobject.c
-@@ -1226,7 +1226,7 @@ pem_CreateObject
+@@ -1225,7 +1225,7 @@ pem_CreateObject
              if (curObj->type != pemCert)
                  continue;
  
